@@ -65,12 +65,14 @@ class TaskViewModel(
     private suspend fun addTask(task: String) {
         withContext(ioDispatcher) {
             addTaskUseCase(task)
+            reduce(TaskAction.LoadTasks)
         }
     }
 
     private suspend fun deleteTask(taskId: Int) {
         withContext(ioDispatcher) {
             deleteTaskUseCase(taskId)
+            reduce(TaskAction.LoadTasks)
         }
     }
 
@@ -83,6 +85,8 @@ class TaskViewModel(
                 pendingDeletions[taskId]?.cancel()
                 incompleteTaskUseCase(taskId)
             }
+
+            reduce(TaskAction.LoadTasks)
         }
     }
 }
