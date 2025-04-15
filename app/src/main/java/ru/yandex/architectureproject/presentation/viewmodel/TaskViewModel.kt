@@ -3,12 +3,14 @@ package ru.yandex.architectureproject.presentation.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.yandex.architectureproject.domain.AddTaskUseCase
@@ -19,6 +21,8 @@ import ru.yandex.architectureproject.domain.IncompleteTaskUseCase
 import ru.yandex.architectureproject.presentation.state.TaskAction
 import ru.yandex.architectureproject.presentation.state.TaskState
 
+private typealias TaskId = Int
+
 class TaskViewModel(
     private val addTaskUseCase: AddTaskUseCase,
     private val deleteTaskUseCase: DeleteTaskUseCase,
@@ -27,6 +31,9 @@ class TaskViewModel(
     private val incompleteTaskUseCase: IncompleteTaskUseCase,
     private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
+
+    private val pendingDeletions = mutableMapOf<TaskId, Job>()
+
     private val _state = MutableStateFlow<TaskState>(TaskState.Loading)
     val state: StateFlow<TaskState> = _state.asStateFlow()
 
@@ -58,26 +65,24 @@ class TaskViewModel(
     private suspend fun addTask(task: String) {
         withContext(ioDispatcher) {
             addTaskUseCase(task)
-            reduce(TaskAction.LoadTasks)
         }
     }
 
     private suspend fun deleteTask(taskId: Int) {
         withContext(ioDispatcher) {
             deleteTaskUseCase(taskId)
-            reduce(TaskAction.LoadTasks)
         }
     }
 
     private suspend fun updateTaskStatus(taskId: Int, isDone: Boolean) {
         withContext(ioDispatcher) {
             if (isDone) {
+                pendingDeletions[taskId] = coroutineContext.job
                 completeTaskUseCase(taskId)
             } else {
+                pendingDeletions[taskId]?.cancel()
                 incompleteTaskUseCase(taskId)
             }
-
-            reduce(TaskAction.LoadTasks)
         }
     }
 }
