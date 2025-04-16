@@ -3,12 +3,14 @@ package ru.yandex.architectureproject.presentation.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.yandex.architectureproject.domain.AddTaskUseCase
@@ -18,6 +20,10 @@ import ru.yandex.architectureproject.domain.GetAllTasksUseCase
 import ru.yandex.architectureproject.domain.IncompleteTaskUseCase
 import ru.yandex.architectureproject.presentation.state.TaskAction
 import ru.yandex.architectureproject.presentation.state.TaskState
+import ru.yandex.architectureproject.utils.job
+import java.util.concurrent.ConcurrentHashMap
+
+private typealias TaskId = Int
 
 class TaskViewModel(
     private val addTaskUseCase: AddTaskUseCase,
@@ -27,6 +33,11 @@ class TaskViewModel(
     private val incompleteTaskUseCase: IncompleteTaskUseCase,
     private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
+
+    private val pendingDeletions: MutableMap<TaskId, Job> = ConcurrentHashMap<TaskId, Job>()
+
+    private var loadTaskJob by job()
+
     private val _state = MutableStateFlow<TaskState>(TaskState.Loading)
     val state: StateFlow<TaskState> = _state.asStateFlow()
 
@@ -35,16 +46,49 @@ class TaskViewModel(
     }
 
     fun reduce(action: TaskAction) {
-        // TODO: Здесь должна быть обработка действий
+        viewModelScope.launch {
+            when (action) {
+                is TaskAction.LoadTasks -> loadTasks()
+                is TaskAction.AddTask -> addTask(action.task)
+                is TaskAction.DeleteTask -> deleteTask(action.taskId)
+                is TaskAction.UpdateTaskStatus -> updateTaskStatus(action.taskId, action.isDone)
+            }
+        }
     }
 
     private suspend fun loadTasks() {
         withContext(ioDispatcher) {
+            loadTaskJob = coroutineContext.job
+
             getAllTasksUseCase()
                 .distinctUntilChanged()
                 .onStart { _state.value = TaskState.Loading }
                 .catch { e -> _state.value = TaskState.Error(e.message ?: "Ошибка загрузки") }
                 .collect { tasks -> _state.value = TaskState.Loaded(tasks) }
+        }
+    }
+
+    private suspend fun addTask(task: String) {
+        withContext(ioDispatcher) {
+            addTaskUseCase(task)
+        }
+    }
+
+    private suspend fun deleteTask(taskId: Int) {
+        withContext(ioDispatcher) {
+            deleteTaskUseCase(taskId)
+        }
+    }
+
+    private suspend fun updateTaskStatus(taskId: Int, isDone: Boolean) {
+        withContext(ioDispatcher) {
+            if (isDone) {
+                pendingDeletions[taskId] = coroutineContext.job
+                completeTaskUseCase(taskId)
+            } else {
+                pendingDeletions[taskId]?.cancel()
+                incompleteTaskUseCase(taskId)
+            }
         }
     }
 }
