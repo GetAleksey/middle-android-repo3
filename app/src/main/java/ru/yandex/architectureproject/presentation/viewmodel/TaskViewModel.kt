@@ -20,6 +20,8 @@ import ru.yandex.architectureproject.domain.GetAllTasksUseCase
 import ru.yandex.architectureproject.domain.IncompleteTaskUseCase
 import ru.yandex.architectureproject.presentation.state.TaskAction
 import ru.yandex.architectureproject.presentation.state.TaskState
+import ru.yandex.architectureproject.utils.job
+import java.util.concurrent.ConcurrentHashMap
 
 private typealias TaskId = Int
 
@@ -32,7 +34,9 @@ class TaskViewModel(
     private val ioDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
 
-    private val pendingDeletions = mutableMapOf<TaskId, Job>()
+    private val pendingDeletions: MutableMap<TaskId, Job> = ConcurrentHashMap<TaskId, Job>()
+
+    private var loadTaskJob by job()
 
     private val _state = MutableStateFlow<TaskState>(TaskState.Loading)
     val state: StateFlow<TaskState> = _state.asStateFlow()
@@ -54,6 +58,8 @@ class TaskViewModel(
 
     private suspend fun loadTasks() {
         withContext(ioDispatcher) {
+            loadTaskJob = coroutineContext.job
+
             getAllTasksUseCase()
                 .distinctUntilChanged()
                 .onStart { _state.value = TaskState.Loading }
@@ -65,14 +71,12 @@ class TaskViewModel(
     private suspend fun addTask(task: String) {
         withContext(ioDispatcher) {
             addTaskUseCase(task)
-            reduce(TaskAction.LoadTasks)
         }
     }
 
     private suspend fun deleteTask(taskId: Int) {
         withContext(ioDispatcher) {
             deleteTaskUseCase(taskId)
-            reduce(TaskAction.LoadTasks)
         }
     }
 
@@ -85,8 +89,6 @@ class TaskViewModel(
                 pendingDeletions[taskId]?.cancel()
                 incompleteTaskUseCase(taskId)
             }
-
-            reduce(TaskAction.LoadTasks)
         }
     }
 }
